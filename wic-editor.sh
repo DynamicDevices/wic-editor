@@ -66,7 +66,7 @@ usage() {
     echo "  $0 -i input.wic -o output.wic -m manual"
     echo "  $0 -i input.wic -o output.wic -m label -p rootfs"
     echo "  $0 -i input.wic -o output.wic -r '/etc/old_config,/var/log/*'"
-    exit 1
+    exit 0
 }
 
 # Function to cleanup on exit
@@ -558,7 +558,7 @@ while getopts "i:o:d:p:m:r:fyh" opt; do
         f) FORCE_OVERWRITE=true ;;
         y) INTERACTIVE=false ;;
         h) SHOW_HELP=true; usage ;;
-        *) usage ;;
+        *) echo "Error: Invalid option"; exit 1 ;;
     esac
 done
 
@@ -569,7 +569,7 @@ if [ "$TARGET_PARTITION" = "list" ]; then
     if [ -z "$ORIGINAL_WIC" ]; then
         echo "Error: Input WIC file required to list partitions"
         SHOW_HELP=true  # Set flag to prevent cleanup messages
-        usage
+        exit 1
     fi
     
     # Just list partitions and exit
@@ -616,7 +616,7 @@ fi
 if [ -z "$ORIGINAL_WIC" ] || [ -z "$OUTPUT_WIC" ]; then
     echo "Error: Input and output files are required"
     SHOW_HELP=true  # Set flag to prevent cleanup messages
-    usage
+    exit 1
 fi
 
 # Check if input file exists
