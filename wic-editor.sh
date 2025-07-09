@@ -144,13 +144,13 @@ ask_confirmation() {
     fi
     
     if [ "$default" = "y" ]; then
-        read -p "$message [Y/n]: " response
+        read -r -p "$message [Y/n]: " response
         case "$response" in
             [nN]|[nN][oO]) return 1 ;;
             *) return 0 ;;
         esac
     else
-        read -p "$message [y/N]: " response
+        read -r -p "$message [y/N]: " response
         case "$response" in
             [yY]|[yY][eE][sS]) return 0 ;;
             *) return 1 ;;
@@ -165,7 +165,7 @@ select_partition_interactive() {
     list_partitions "$loop_device"
     
     echo "Which partition would you like to modify?"
-    read -p "Enter partition number: " partition_choice
+    read -r -p "Enter partition number: " partition_choice
     
     # Validate partition choice
     partition_device="${loop_device}p${partition_choice}"
@@ -192,7 +192,7 @@ find_partition_by_label() {
     local target_label="$2"
     
     # Check each partition for matching label
-    for part in ${loop_device}p*; do
+    for part in "${loop_device}p"*; do
         if [ -e "$part" ]; then
             label=$(sudo blkid -o value -s LABEL "$part" 2>/dev/null || echo "")
             if [ "$label" = "$target_label" ]; then
@@ -211,7 +211,7 @@ find_partition_by_filesystem() {
     local target_fs="$2"
     
     # Check each partition for matching filesystem
-    for part in ${loop_device}p*; do
+    for part in "${loop_device}p"*; do
         if [ -e "$part" ]; then
             fs_type=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "")
             if [ "$fs_type" = "$target_fs" ]; then
@@ -231,7 +231,7 @@ find_largest_partition() {
     local largest_size=0
     
     # Check each partition
-    for part in ${loop_device}p*; do
+    for part in "${loop_device}p"*; do
         if [ -e "$part" ]; then
             # Get partition size in bytes
             size=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
@@ -256,13 +256,15 @@ select_target_partition() {
             local ROOT_PARTITION=""
             local LARGEST_SIZE=0
             
-            for part in ${loop_device}p*; do
+            for part in "${loop_device}p"*; do
                 if [ -e "$part" ]; then
                     # Get filesystem type
-                    local FS_TYPE=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "unknown")
+                    local FS_TYPE
+                    FS_TYPE=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "unknown")
                     
                     # Get partition size
-                    local SIZE=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
+                    local SIZE
+                    SIZE=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
                     
                     # Look for ext4 filesystem (common for root partition)
                     if [ "$FS_TYPE" = "ext4" ] && [ "$SIZE" -gt "$LARGEST_SIZE" ]; then
@@ -295,7 +297,8 @@ select_target_partition() {
                 return 1
             fi
             
-            local partition=$(find_partition_by_label "$loop_device" "$TARGET_PARTITION")
+            local partition
+            partition=$(find_partition_by_label "$loop_device" "$TARGET_PARTITION")
             if [ -z "$partition" ]; then
                 echo "Error: Partition with label '$TARGET_PARTITION' not found"
                 return 1
@@ -310,7 +313,8 @@ select_target_partition() {
                 return 1
             fi
             
-            local partition=$(find_partition_by_filesystem "$loop_device" "$TARGET_PARTITION")
+            local partition
+            partition=$(find_partition_by_filesystem "$loop_device" "$TARGET_PARTITION")
             if [ -z "$partition" ]; then
                 echo "Error: Partition with filesystem '$TARGET_PARTITION' not found"
                 return 1
@@ -364,17 +368,30 @@ delete_files_from_partition() {
             pattern=$(basename "$file_pattern")
             
             if [ -d "$base_dir" ]; then
+                # Use a temporary file to count deletions since we're in a subshell
+                local temp_count_file="/tmp/wic_editor_count_$"
+                echo "$files_deleted" > "$temp_count_file"
+                
                 find "$base_dir" -name "$pattern" -type f -print0 | while IFS= read -r -d '' found_file; do
-                    relative_file=${found_file#$mount_dir}
+                    relative_file=${found_file#"$mount_dir"}
                     
                     if [ "$FORCE_OVERWRITE" = true ] || ask_confirmation "Delete file: $relative_file?" "n"; then
                         sudo rm -f "$found_file"
                         echo "    Deleted: $relative_file"
-                        ((files_deleted++))
+                        # Update count in temp file
+                        local current_count
+                        current_count=$(cat "$temp_count_file")
+                        echo $((current_count + 1)) > "$temp_count_file"
                     else
                         echo "    Skipped: $relative_file"
                     fi
                 done
+                
+                # Read back the count
+                if [ -f "$temp_count_file" ]; then
+                    files_deleted=$(cat "$temp_count_file")
+                    rm -f "$temp_count_file"
+                fi
             else
                 echo "    Directory not found: $(dirname "$file_pattern")"
                 ((files_not_found++))
@@ -443,7 +460,7 @@ handle_file_conflict() {
             return 0
         fi
         
-        read -p "  Choose option [1-4]: " choice
+        read -r -p "  Choose option [1-4]: " choice
         case "$choice" in
             1) 
                 echo "  Action: Overwriting existing file"
@@ -486,7 +503,7 @@ copy_files_with_conflict_handling() {
     # Find all files in source directory
     while IFS= read -r -d '' src_file; do
         # Get relative path from source directory
-        relative_path="${src_file#$src_dir/}"
+        relative_path="${src_file#"$src_dir"/}"
         dst_file="$dst_dir/$relative_path"
         
         # Check if destination file exists
