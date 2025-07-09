@@ -1,0 +1,39 @@
+# WIC Editor working directories
+wic_work/
+*.wic
+*.wic.gz
+*_modified.wic*
+*_backup.wic*
+
+# Custom files directories (except examples)
+custom_files/
+!examples/custom_files/
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Log files
+*.log
+*.out
+
+# Loop devices backup
+loop_devices_backup.txt
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

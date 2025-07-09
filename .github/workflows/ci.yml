@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gzip util-linux parted
+    
+    - name: Check script syntax
+      run: |
+        bash -n wic-editor.sh
+    
+    - name: Run shellcheck
+      run: |
+        sudo apt-get install -y shellcheck
+        shellcheck wic-editor.sh
+    
+    - name: Test help output
+      run: |
+        ./wic-editor.sh -h
+    
+    - name: Test with missing arguments
+      run: |
+        if ./wic-editor.sh; then
+          echo "Script should fail with missing arguments"
+          exit 1
+        fi
