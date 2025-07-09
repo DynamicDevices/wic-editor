@@ -158,13 +158,13 @@ ask_confirmation() {
     fi
     
     if [ "$default" = "y" ]; then
-        read -r -p "$message [Y/n]: " response
+        read -r -p "$message [Y/n]: " response < /dev/tty
         case "$response" in
             [nN]|[nN][oO]) return 1 ;;
             *) return 0 ;;
         esac
     else
-        read -r -p "$message [y/N]: " response
+        read -r -p "$message [y/N]: " response < /dev/tty
         case "$response" in
             [yY]|[yY][eE][sS]) return 0 ;;
             *) return 1 ;;
@@ -179,7 +179,7 @@ select_partition_interactive() {
     list_partitions "$loop_device"
     
     echo "Which partition would you like to modify?"
-    read -r -p "Enter partition number: " partition_choice
+    read -r -p "Enter partition number: " partition_choice < /dev/tty
     
     # Validate partition choice
     partition_device="${loop_device}p${partition_choice}"
@@ -474,7 +474,7 @@ handle_file_conflict() {
             return 0
         fi
         
-        read -r -p "  Choose option [1-4]: " choice
+        read -r -p "  Choose option [1-4]: " choice < /dev/tty
         case "$choice" in
             1) 
                 echo "  Action: Overwriting existing file"
@@ -497,8 +497,11 @@ handle_file_conflict() {
                 echo "  Aborting operation"
                 return 1  # Return instead of exit to allow cleanup
                 ;;
+            "")
+                echo "  No input received. Please choose 1-4."
+                ;;
             *)
-                echo "  Invalid option. Please choose 1-4."
+                echo "  Invalid option '$choice'. Please choose 1-4."
                 ;;
         esac
     done
@@ -768,15 +771,26 @@ echo "Starting filesystem sync and unmount..."
 sync
 
 echo "Unmounting filesystem..."
-echo "Unmounting: $WORK_DIR/$MOUNT_DIR"
-if ! umount "$WORK_DIR/$MOUNT_DIR"; then
-    echo "Warning: Failed to unmount cleanly, forcing unmount..."
-    umount -f "$WORK_DIR/$MOUNT_DIR" || umount -l "$WORK_DIR/$MOUNT_DIR" || true
+# Use absolute path to avoid directory confusion
+MOUNT_PATH="$(pwd)/$WORK_DIR/$MOUNT_DIR"
+echo "Unmounting: $MOUNT_PATH"
+
+if mountpoint -q "$MOUNT_PATH" 2>/dev/null; then
+    if ! umount "$MOUNT_PATH"; then
+        echo "Warning: Failed to unmount cleanly, forcing unmount..."
+        umount -f "$MOUNT_PATH" || umount -l "$MOUNT_PATH" || true
+    fi
+else
+    echo "Mount point not found or already unmounted"
 fi
 
 # Verify unmount
-if mountpoint -q "$WORK_DIR/$MOUNT_DIR" 2>/dev/null; then
+if mountpoint -q "$MOUNT_PATH" 2>/dev/null; then
     echo "Warning: Mount point still active after unmount attempt"
+    # Try to find what's using it
+    echo "Processes using the mount point:"
+    lsof "$MOUNT_PATH" || true
+    fuser -v "$MOUNT_PATH" || true
 else
     echo "Filesystem unmounted successfully"
 fi
@@ -834,35 +848,61 @@ LOOP_DEVICE=""  # Clear variable to prevent cleanup from trying again
 # Step 12: Final cleanup
 echo "Final cleanup..."
 
-# Go back to the work directory for cleanup
-cd "$WORK_DIR"
+# Go back to original directory
+cd ..
 
 # Force cleanup any remaining loop devices pointing to our working file
 echo "Checking for remaining loop devices..."
-remaining_loops=$(losetup -l 2>/dev/null | grep "working.wic" | cut -d: -f1)
+remaining_loops=$(losetup -l 2>/dev/null | grep "working.wic" | awk '{print $1}')
 if [ -n "$remaining_loops" ]; then
-    echo "Found remaining loop devices: $remaining_loops"
+    echo "Found remaining loop devices:"
+    echo "$remaining_loops"
     for loop in $remaining_loops; do
-        echo "Detaching remaining loop device: $loop"
-        losetup -d "$loop" || true
+        if [ -n "$loop" ] && [ "$loop" != "LOOP" ]; then
+            echo "Detaching remaining loop device: $loop"
+            losetup -d "$loop" 2>/dev/null || true
+        fi
     done
 else
     echo "No remaining loop devices found"
 fi
 
-# Go back to original directory
-cd ..
+# Force unmount any remaining mount points
+MOUNT_PATH="$(pwd)/$WORK_DIR/$MOUNT_DIR"
+if mountpoint -q "$MOUNT_PATH" 2>/dev/null; then
+    echo "Force unmounting remaining mount point: $MOUNT_PATH"
+    umount -f "$MOUNT_PATH" 2>/dev/null || umount -l "$MOUNT_PATH" 2>/dev/null || true
+fi
 
 # Remove work directory
 if [ -d "$WORK_DIR" ]; then
     echo "Removing work directory: $WORK_DIR"
     echo "Contents before removal:"
     ls -la "$WORK_DIR/" || true
+    
+    # Try to remove read-only files if any
+    chmod -R u+w "$WORK_DIR" 2>/dev/null || true
+    
     rm -rf "$WORK_DIR"
     if [ -d "$WORK_DIR" ]; then
         echo "Warning: Work directory still exists after removal attempt"
-        echo "Attempting force removal..."
-        rm -rf "$WORK_DIR" || true
+        echo "Attempting force removal with lazy unmount..."
+        
+        # Find and unmount any remaining mount points
+        if command -v findmnt &> /dev/null; then
+            findmnt -t ext4,ext3,ext2,vfat | grep "$WORK_DIR" | awk '{print $1}' | while read -r mount_point; do
+                echo "Force unmounting: $mount_point"
+                umount -l "$mount_point" 2>/dev/null || true
+            done
+        fi
+        
+        # Try again
+        rm -rf "$WORK_DIR" 2>/dev/null || true
+        
+        if [ -d "$WORK_DIR" ]; then
+            echo "Error: Unable to remove work directory. Manual cleanup may be required."
+            echo "You can manually run: sudo rm -rf $WORK_DIR"
+        fi
     else
         echo "Work directory successfully removed"
     fi
