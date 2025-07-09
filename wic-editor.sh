@@ -32,21 +32,37 @@ MOUNT_DIR="wic_mount"
 INPUT_COMPRESSED=false
 FORCE_OVERWRITE=false
 INTERACTIVE=true
+TARGET_PARTITION=""
+PARTITION_SELECTION_MODE="auto"
+DELETE_FILES=""
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 -i <input_wic[.gz]> -o <output_wic[.gz]> [-d <custom_files_dir>] [-f] [-y]"
+    echo "Usage: $0 -i <input_wic[.gz]> -o <output_wic[.gz]> [-d <custom_files_dir>] [-p <partition>] [-m <mode>] [-r <files_to_delete>] [-f] [-y]"
     echo "  -i: Input WIC image file (compressed .wic.gz or uncompressed .wic)"
     echo "  -o: Output WIC image file (compressed .wic.gz or uncompressed .wic)"
     echo "  -d: Directory containing custom files to add (default: custom_files)"
+    echo "  -p: Target partition (number, label, or 'list' to show available partitions)"
+    echo "  -m: Partition selection mode: auto, manual, largest, label, filesystem"
+    echo "  -r: Comma-separated list of files/directories to delete from target partition"
     echo "  -f: Force overwrite existing files without prompting"
     echo "  -y: Answer 'yes' to all prompts (non-interactive mode)"
     echo "  -h: Show this help message"
     echo ""
+    echo "Partition Selection Modes:"
+    echo "  auto     - Find largest ext4 partition (default)"
+    echo "  manual   - Interactively select partition"
+    echo "  largest  - Select largest partition regardless of filesystem"
+    echo "  label    - Select partition by label (use with -p)"
+    echo "  filesystem - Select partition by filesystem type (use with -p)"
+    echo ""
     echo "Examples:"
-    echo "  $0 -i rootfs.wic.gz -o rootfs_modified.wic.gz -d my_custom_files"
-    echo "  $0 -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic -f"
-    echo "  $0 -i rootfs.wic -o rootfs_modified.wic -d custom_files -y"
+    echo "  $0 -i rootfs.wic.gz -o rootfs_modified.wic.gz"
+    echo "  $0 -i input.wic -o output.wic -p 3"
+    echo "  $0 -i input.wic -o output.wic -p list"
+    echo "  $0 -i input.wic -o output.wic -m manual"
+    echo "  $0 -i input.wic -o output.wic -m label -p rootfs"
+    echo "  $0 -i input.wic -o output.wic -r '/etc/old_config,/var/log/*'"
     exit 1
 }
 
@@ -73,8 +89,89 @@ cleanup() {
     fi
 }
 
-# Function to ask user for confirmation
-ask_confirmation() {
+# Function to delete files from target partition
+delete_files_from_partition() {
+    local mount_dir="$1"
+    local files_to_delete="$2"
+    
+    if [ -z "$files_to_delete" ]; then
+        return 0
+    fi
+    
+    echo "Deleting specified files from partition..."
+    
+    # Split comma-separated file list
+    IFS=',' read -ra DELETE_LIST <<< "$files_to_delete"
+    
+    local files_deleted=0
+    local files_not_found=0
+    
+    for file_pattern in "${DELETE_LIST[@]}"; do
+        # Remove leading/trailing whitespace
+        file_pattern=$(echo "$file_pattern" | xargs)
+        
+        # Handle relative paths (add leading slash if missing)
+        if [[ "$file_pattern" != /* ]]; then
+            file_pattern="/$file_pattern"
+        fi
+        
+        # Full path in mounted filesystem
+        full_path="$mount_dir$file_pattern"
+        
+        echo "  Processing: $file_pattern"
+        
+        # Handle wildcards with find
+        if [[ "$file_pattern" == *"*"* ]]; then
+            # Use find for wildcard patterns
+            base_dir=$(dirname "$full_path")
+            pattern=$(basename "$file_pattern")
+            
+            if [ -d "$base_dir" ]; then
+                find "$base_dir" -name "$pattern" -type f -print0 | while IFS= read -r -d '' found_file; do
+                    relative_file=${found_file#$mount_dir}
+                    
+                    if [ "$FORCE_OVERWRITE" = true ] || ask_confirmation "Delete file: $relative_file?" "n"; then
+                        sudo rm -f "$found_file"
+                        echo "    Deleted: $relative_file"
+                        ((files_deleted++))
+                    else
+                        echo "    Skipped: $relative_file"
+                    fi
+                done
+            else
+                echo "    Directory not found: $(dirname "$file_pattern")"
+                ((files_not_found++))
+            fi
+        else
+            # Handle exact file/directory paths
+            if [ -f "$full_path" ]; then
+                if [ "$FORCE_OVERWRITE" = true ] || ask_confirmation "Delete file: $file_pattern?" "n"; then
+                    sudo rm -f "$full_path"
+                    echo "    Deleted: $file_pattern"
+                    ((files_deleted++))
+                else
+                    echo "    Skipped: $file_pattern"
+                fi
+            elif [ -d "$full_path" ]; then
+                if [ "$FORCE_OVERWRITE" = true ] || ask_confirmation "Delete directory: $file_pattern?" "n"; then
+                    sudo rm -rf "$full_path"
+                    echo "    Deleted: $file_pattern (directory)"
+                    ((files_deleted++))
+                else
+                    echo "    Skipped: $file_pattern (directory)"
+                fi
+            else
+                echo "    Not found: $file_pattern"
+                ((files_not_found++))
+            fi
+        fi
+    done
+    
+    echo ""
+    echo "File deletion summary:"
+    echo "  Files deleted: $files_deleted"
+    echo "  Files not found: $files_not_found"
+}
     local message="$1"
     local default="$2"  # y or n
     
@@ -298,37 +395,41 @@ echo "Loop device: $LOOP_DEVICE"
 echo "Probing partitions..."
 sudo partprobe "$LOOP_DEVICE"
 
-# Step 5: Find the root filesystem partition
-# Typically the largest partition or the one with ext4 filesystem
-echo "Finding root filesystem partition..."
-ROOT_PARTITION=""
-LARGEST_SIZE=0
-
-# Check each partition
-for part in ${LOOP_DEVICE}p*; do
-    if [ -e "$part" ]; then
-        # Get filesystem type
-        FS_TYPE=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "unknown")
-        
-        # Get partition size
-        SIZE=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
-        
-        echo "Partition: $part, Type: $FS_TYPE, Size: $SIZE bytes"
-        
-        # Look for ext4 filesystem (common for root partition)
-        if [ "$FS_TYPE" = "ext4" ] && [ "$SIZE" -gt "$LARGEST_SIZE" ]; then
-            ROOT_PARTITION="$part"
-            LARGEST_SIZE="$SIZE"
+# Step 5: Find and select the target partition
+echo "Selecting target partition..."
+if [ "$PARTITION_SELECTION_MODE" = "manual" ] && [ -n "$TARGET_PARTITION" ] && [[ "$TARGET_PARTITION" =~ ^[0-9]+$ ]]; then
+    # User specified a partition number directly
+    ROOT_PARTITION="${LOOP_DEVICE}p${TARGET_PARTITION}"
+    
+    if [ ! -e "$ROOT_PARTITION" ]; then
+        echo "Error: Partition $TARGET_PARTITION does not exist"
+        exit 1
+    fi
+    
+    # Get filesystem type for confirmation
+    FS_TYPE=$(sudo blkid -o value -s TYPE "$ROOT_PARTITION" 2>/dev/null || echo "unknown")
+    echo "Selected partition $TARGET_PARTITION ($FS_TYPE filesystem)"
+    
+    if [ "$FS_TYPE" != "ext4" ] && [ "$FS_TYPE" != "ext3" ] && [ "$FS_TYPE" != "ext2" ]; then
+        echo "Warning: Partition filesystem is $FS_TYPE, not ext4"
+        if [ "$INTERACTIVE" = true ] && ! ask_confirmation "Continue anyway?" "n"; then
+            echo "Operation cancelled"
+            exit 1
         fi
     fi
-done
-
-if [ -z "$ROOT_PARTITION" ]; then
-    echo "Error: Could not find root filesystem partition"
-    exit 1
+else
+    # Use partition selection function
+    ROOT_PARTITION=$(select_target_partition "$LOOP_DEVICE")
+    
+    if [ -z "$ROOT_PARTITION" ]; then
+        echo "Error: Could not determine target partition"
+        exit 1
+    fi
+    
+    # Get filesystem type for display
+    FS_TYPE=$(sudo blkid -o value -s TYPE "$ROOT_PARTITION" 2>/dev/null || echo "unknown")
+    echo "Selected partition: $ROOT_PARTITION ($FS_TYPE filesystem)"
 fi
-
-echo "Root filesystem partition: $ROOT_PARTITION"
 
 # Step 6: Create mount point and mount the root partition
 echo "Creating mount point and mounting root partition..."
@@ -356,7 +457,7 @@ echo "Detaching loop device..."
 sudo losetup -d "$LOOP_DEVICE"
 LOOP_DEVICE=""  # Clear variable to prevent cleanup from trying again
 
-# Step 10: Create the final output image
+# Step 11: Create the final output image
 echo "Creating final output image..."
 if [ "$OUTPUT_COMPRESSED" = true ]; then
     echo "Compressing modified WIC image..."
@@ -366,7 +467,7 @@ else
     cp working.wic "../$OUTPUT_WIC"
 fi
 
-# Step 11: Cleanup
+# Step 12: Cleanup
 cd ..
 rm -rf "$WORK_DIR"
 

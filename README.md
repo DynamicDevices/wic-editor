@@ -30,14 +30,16 @@ This script allows you to unpack a WIC image (compressed or uncompressed), add c
 ## Features
 
 - **Flexible input/output**: Handles both compressed (`.wic.gz`) and uncompressed (`.wic`) images
-- **Automatic partition detection**: Finds and mounts the root filesystem partition automatically
+- **Advanced partition detection**: Multiple methods to identify and select target partitions
 - **Intelligent file conflict handling**: Detects and manages file overwrites with multiple resolution options
+- **File deletion capabilities**: Remove unwanted files before adding new ones
 - **Safe operation**: Uses loop devices for safe image manipulation
 - **Permission preservation**: Maintains file permissions and directory structure
 - **Interactive and automated modes**: Supports both manual review and automated deployment
+- **Comprehensive partition analysis**: Detailed information about all partitions in WIC images
 - **Error handling**: Comprehensive error checking and automatic cleanup
 - **UUU integration**: Optimised for NXP UUU flashing workflow
-- **Detailed reporting**: Shows exactly what files were added, modified, or skipped
+- **Detailed reporting**: Shows exactly what files were added, modified, or deleted
 
 ## Requirements
 
@@ -73,59 +75,125 @@ sudo dnf install gzip util-linux parted
 
 ### Basic Syntax
 ```bash
-./wic-editor.sh -i <input_wic[.gz]> -o <output_wic[.gz]> [-d <custom_files_dir>] [-f] [-y]
+./wic-editor.sh -i <input_wic[.gz]> -o <output_wic[.gz]> [-d <custom_files_dir>] [-p <partition>] [-m <mode>] [-r <files_to_delete>] [-f] [-y]
 ```
 
 ### Options
 - `-i`: Input WIC image file (compressed `.wic.gz` or uncompressed `.wic`)
 - `-o`: Output WIC image file (compressed `.wic.gz` or uncompressed `.wic`)
 - `-d`: Directory containing custom files to add (default: `custom_files`)
+- `-p`: Target partition (number, label, or 'list' to show available partitions)
+- `-m`: Partition selection mode: `auto`, `manual`, `largest`, `label`, `filesystem`
+- `-r`: Comma-separated list of files/directories to delete from target partition
 - `-f`: Force overwrite existing files without prompting
 - `-y`: Answer 'yes' to all prompts (non-interactive mode)
 - `-h`: Show help message
 
+### Partition Selection Modes
+- **`auto`** (default): Find largest ext4 partition
+- **`manual`**: Interactively select partition
+- **`largest`**: Select largest partition regardless of filesystem
+- **`label`**: Select partition by label (use with `-p`)
+- **`filesystem`**: Select partition by filesystem type (use with `-p`)
+
 ### Examples
+
+### Examples
+
+#### Getting Started with Unknown WIC Images
+```bash
+# First, list all partitions to understand the structure
+./wic-editor.sh -i unknown-image.wic -p list
+
+# Sample output shows:
+# Partition 1: boot (FAT32, 100MB)
+# Partition 2: rootfs (ext4, 2GB) 
+# Partition 3: data (ext4, 1GB)
+```
+
+#### Basic Usage
+```bash
+# Auto-detect target partition (works for most images)
+./wic-editor.sh -i input.wic -o output.wic
+
+# With custom files directory
+./wic-editor.sh -i input.wic -o output.wic -d my_custom_files
+```
+
+#### Partition Selection
+```bash
+# Select specific partition by number
+./wic-editor.sh -i input.wic -o output.wic -p 2
+
+# Interactive partition selection
+./wic-editor.sh -i input.wic -o output.wic -m manual
+
+# Select by partition label
+./wic-editor.sh -i input.wic -o output.wic -m label -p rootfs
+
+# Select by filesystem type
+./wic-editor.sh -i input.wic -o output.wic -m filesystem -p ext4
+
+# Select largest partition (any filesystem)
+./wic-editor.sh -i input.wic -o output.wic -m largest
+```
+
+#### File Deletion
+```bash
+# Delete specific files before adding new ones
+./wic-editor.sh -i input.wic -o output.wic -r "/etc/old_config.conf,/var/log/debug.log"
+
+# Delete with wildcards
+./wic-editor.sh -i input.wic -o output.wic -r "/tmp/*,/var/cache/*"
+
+# Delete directories
+./wic-editor.sh -i input.wic -o output.wic -r "/opt/old_app"
+
+# Combined deletion and addition
+./wic-editor.sh -i input.wic -o output.wic -r "/etc/hostname,/var/log/*" -d new_files
+```
 
 #### For NXP i.MX8MM EVK (UUU workflow)
 ```bash
-# Typical usage with uncompressed WIC image
+# Auto-detect (typical usage)
 ./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic
 
-# With custom files directory
-./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic -d my_custom_files
+# List partitions first to understand structure
+./wic-editor.sh -i imx-image-full-imx8mmevk.wic -p list
 
-# Force overwrite without prompting
-./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic -f
+# Select specific partition
+./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic -p 2
 
-# Non-interactive mode (answer 'yes' to all prompts)
-./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic -y
+# Clean up old files and add new ones
+./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic \
+  -r "/etc/hostname,/var/log/*" -d my_custom_files -f
 ```
 
 #### With compressed images
 ```bash
 # Compressed to compressed
-./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic.gz
+./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic.gz -p 2
 
-# Compressed to uncompressed with force overwrite
-./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic -f
+# Compressed to uncompressed with partition selection
+./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic -m manual
 
-# Uncompressed to compressed in non-interactive mode
-./wic-editor.sh -i rootfs.wic -o rootfs_modified.wic.gz -y
+# Uncompressed to compressed with file deletion
+./wic-editor.sh -i rootfs.wic -o rootfs_modified.wic.gz -r "/tmp/*"
 ```
 
-#### File Conflict Handling
+#### File Conflict and Automation
 ```bash
 # Interactive mode (default) - prompts for each file conflict
-./wic-editor.sh -i input.wic -o output.wic
+./wic-editor.sh -i input.wic -o output.wic -p 2
 
 # Force overwrite all conflicting files
-./wic-editor.sh -i input.wic -o output.wic -f
+./wic-editor.sh -i input.wic -o output.wic -p 2 -f
 
 # Non-interactive mode - automatically overwrites conflicting files
-./wic-editor.sh -i input.wic -o output.wic -y
+./wic-editor.sh -i input.wic -o output.wic -p 2 -y
 
-# Combine force and non-interactive for fully automated operation
-./wic-editor.sh -i input.wic -o output.wic -f -y
+# Fully automated operation
+./wic-editor.sh -i input.wic -o output.wic -p 2 -f -y
 ```
 
 ## Setup Instructions
@@ -194,12 +262,53 @@ FB: flash -raw2sparse all imx-image-full-imx8mmevk-modified.wic
 2. **Image preparation**: Decompresses input if needed, creates working copy
 3. **Partition analysis**: Uses `parted` to examine WIC image structure
 4. **Loop device setup**: Creates loop device for safe image manipulation
-5. **Partition detection**: Automatically finds root filesystem partition (largest ext4 partition)
-6. **Filesystem mounting**: Mounts root partition for file operations
-7. **File conflict detection**: Scans for existing files that would be overwritten
-8. **File addition**: Copies custom files with conflict resolution options
-9. **Cleanup and packaging**: Unmounts filesystem, detaches loop device, creates output image
-10. **Compression**: Applies compression if output filename ends with `.gz`
+5. **Partition detection/selection**: Automatically finds or interactively selects target partition
+6. **Filesystem mounting**: Mounts target partition for file operations
+7. **File deletion**: Removes specified files/directories if requested
+8. **File conflict detection**: Scans for existing files that would be overwritten
+9. **File addition**: Copies custom files with conflict resolution options
+10. **Cleanup and packaging**: Unmounts filesystem, detaches loop device, creates output image
+11. **Compression**: Applies compression if output filename ends with `.gz`
+
+## Partition Detection and Selection
+
+WIC Editor provides multiple ways to identify and select the target partition for modification:
+
+### Automatic Detection (Default)
+- Scans all partitions in the WIC image
+- Finds the largest ext4 partition
+- Assumes this is the root filesystem
+- Works for 90% of embedded Linux images
+
+### Interactive Selection
+- Shows detailed information about all partitions
+- Displays partition number, size, filesystem type, and label
+- Allows you to choose the appropriate partition
+- Confirms selection before proceeding
+
+### Specific Selection Methods
+- **By number**: Direct partition number specification
+- **By label**: Searches for partition with specific label
+- **By filesystem**: Finds first partition with specified filesystem type
+- **Largest**: Selects largest partition regardless of filesystem
+
+### Partition Information Display
+When listing partitions, you'll see:
+```
+Partition 1:
+  Device: /dev/loop0p1
+  Size: 100MB
+  Filesystem: vfat
+  Label: boot
+  UUID: 1234-5678
+
+Partition 2:
+  Device: /dev/loop0p2
+  Size: 2GB
+  Filesystem: ext4
+  Label: rootfs
+  UUID: abcd-ef12-3456-7890
+```
 
 ## File Conflict Handling
 
@@ -256,50 +365,39 @@ File operation summary:
 
 ## Common Use Cases
 
-### Adding Configuration Files (with Overwrite Handling)
+### Exploring Unknown WIC Images
 ```bash
-# Add configuration files to /etc (will prompt for conflicts)
-mkdir -p custom_files/etc
-cp my_config.conf custom_files/etc/
+# First step: understand the partition structure
+./wic-editor.sh -i unknown-image.wic -p list
 
-# Force overwrite any existing config files
-./wic-editor.sh -i input.wic -o output.wic -f
+# Once you know the layout, select appropriate partition
+./wic-editor.sh -i unknown-image.wic -o modified.wic -p 2
 ```
 
-### Replacing System Files
+### System Configuration with Cleanup
 ```bash
-# Replace existing system files (e.g., hostname, hosts)
-mkdir -p custom_files/etc
-echo "my-device-name" > custom_files/etc/hostname
-echo "127.0.0.1 my-device-name" >> custom_files/etc/hosts
-
-# Use interactive mode to review conflicts
-./wic-editor.sh -i input.wic -o output.wic
+# Remove old configs and add new ones
+./wic-editor.sh -i system.wic -o updated.wic \
+  -r "/etc/old_config.conf,/etc/deprecated/*" \
+  -d new_system_configs
 ```
 
-### Installing Custom Applications
+### Application Deployment
 ```bash
-# Add application to /opt (typically no conflicts)
-mkdir -p custom_files/opt/my_app
-cp -r my_application/* custom_files/opt/my_app/
-
-# Add application with potential system integration
-mkdir -p custom_files/etc/systemd/system
-cp my_app.service custom_files/etc/systemd/system/
-
-# Use force mode for system integration files
-./wic-editor.sh -i input.wic -o output.wic -f
+# Clean deployment: remove old app and install new version
+./wic-editor.sh -i base.wic -o deployed.wic \
+  -r "/opt/old_app" \
+  -d new_app_files \
+  -m label -p rootfs
 ```
 
-### Modifying Existing Services
+### Development Workflow
 ```bash
-# Modify existing systemd service
-mkdir -p custom_files/etc/systemd/system
-cp modified_service.service custom_files/etc/systemd/system/existing_service.service
+# Interactive mode for careful development
+./wic-editor.sh -i dev-image.wic -o test-image.wic -m manual
 
-# Review changes interactively
-./wic-editor.sh -i input.wic -o output.wic
-# When prompted, choose option 3 to see differences before deciding
+# Production deployment with automation
+./wic-editor.sh -i prod-image.wic -o deployed.wic -p 2 -f -y
 ```
 
 ### Adding Startup Scripts
@@ -335,6 +433,24 @@ cp my_files/* custom_files/home/root/
 - Check file permissions in the custom files directory
 - Ensure the custom files directory exists and contains files
 - Check the file operation summary for skipped files
+- Verify you're targeting the correct partition
+
+### Wrong Partition Selected
+- Use `-p list` to see all available partitions
+- Use `-m manual` for interactive selection
+- Check partition labels with `-m label -p <label_name>`
+- Verify filesystem type before proceeding
+
+### Partition Not Found Errors
+- Ensure partition number exists (use `-p list`)
+- Check partition label spelling for label-based selection
+- Verify filesystem type for filesystem-based selection
+
+### File Deletion Issues
+- Use absolute paths starting with `/` for file deletion
+- Check file paths exist before deletion
+- Use interactive mode to confirm deletions
+- Wildcards require proper shell escaping
 
 ### File Conflicts Not Being Detected
 - Ensure you're using the correct relative paths in your custom files directory
@@ -507,3 +623,5 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 - **v1.4**: Added intelligent file conflict detection and resolution
 - **v1.5**: Implemented interactive and automated modes for file handling
 - **v1.6**: Added detailed file operation reporting and diff capabilities
+- **v1.7**: Advanced partition detection with multiple selection modes
+- **v1.8**: File deletion capabilities and comprehensive partition analysis
