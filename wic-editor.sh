@@ -21,7 +21,18 @@
 # This script unpacks WIC images, adds custom files, and repackages them
 # Designed for embedded Linux development, specifically tested with NXP i.MX8MM EVK
 
-set -e  # Exit on any error
+set -e  # Exit on any error (but we'll disable this for debugging)
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "Error: WIC Editor requires root privileges to mount filesystems and manage loop devices"
+    echo "Please run with sudo:"
+    echo "  sudo $0 $*"
+    exit 1
+fi
+
+# Disable exit on error for debugging
+set +e
 
 # Configuration
 ORIGINAL_WIC=""
@@ -78,8 +89,8 @@ cleanup() {
     
     echo "Cleaning up..."
     
-    # Unmount if mounted
-    if mountpoint -q "$WORK_DIR/$MOUNT_DIR" 2>/dev/null; then
+    # Unmount if mounted (check the actual mount point)
+    if [ -d "$WORK_DIR/$MOUNT_DIR" ] && mountpoint -q "$WORK_DIR/$MOUNT_DIR" 2>/dev/null; then
         echo "Unmounting filesystem..."
         sudo umount "$WORK_DIR/$MOUNT_DIR" || true
     fi
@@ -90,11 +101,14 @@ cleanup() {
         sudo losetup -d "$LOOP_DEVICE" || true
     fi
     
-    # Clean up work directory
+    # Clean up work directory completely
     if [ -d "$WORK_DIR" ]; then
         echo "Removing work directory..."
         rm -rf "$WORK_DIR"
     fi
+    
+    # Clean up any temporary files we might have created
+    rm -f /tmp/wic_editor_count_$
 }
 
 # Function to list all partitions with detailed information
@@ -114,13 +128,13 @@ list_partitions() {
             size=$(echo "$line" | awk '{print $4}')
             
             # Get filesystem type
-            fs_type=$(sudo blkid -o value -s TYPE "$partition_device" 2>/dev/null || echo "unknown")
+            fs_type=$(blkid -o value -s TYPE "$partition_device" 2>/dev/null || echo "unknown")
             
             # Get partition label
-            label=$(sudo blkid -o value -s LABEL "$partition_device" 2>/dev/null || echo "none")
+            label=$(blkid -o value -s LABEL "$partition_device" 2>/dev/null || echo "none")
             
             # Get UUID
-            uuid=$(sudo blkid -o value -s UUID "$partition_device" 2>/dev/null || echo "none")
+            uuid=$(blkid -o value -s UUID "$partition_device" 2>/dev/null || echo "none")
             
             echo "Partition $partition_num:"
             echo "  Device: $partition_device"
@@ -175,7 +189,7 @@ select_partition_interactive() {
     fi
     
     # Get filesystem type for confirmation
-    fs_type=$(sudo blkid -o value -s TYPE "$partition_device" 2>/dev/null || echo "unknown")
+    fs_type=$(blkid -o value -s TYPE "$partition_device" 2>/dev/null || echo "unknown")
     
     echo "Selected partition $partition_choice ($fs_type filesystem)"
     if ! ask_confirmation "Proceed with this partition?" "y"; then
@@ -194,7 +208,7 @@ find_partition_by_label() {
     # Check each partition for matching label
     for part in "${loop_device}p"*; do
         if [ -e "$part" ]; then
-            label=$(sudo blkid -o value -s LABEL "$part" 2>/dev/null || echo "")
+            label=$(blkid -o value -s LABEL "$part" 2>/dev/null || echo "")
             if [ "$label" = "$target_label" ]; then
                 echo "$part"
                 return 0
@@ -213,7 +227,7 @@ find_partition_by_filesystem() {
     # Check each partition for matching filesystem
     for part in "${loop_device}p"*; do
         if [ -e "$part" ]; then
-            fs_type=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "")
+            fs_type=$(blkid -o value -s TYPE "$part" 2>/dev/null || echo "")
             if [ "$fs_type" = "$target_fs" ]; then
                 echo "$part"
                 return 0
@@ -234,7 +248,7 @@ find_largest_partition() {
     for part in "${loop_device}p"*; do
         if [ -e "$part" ]; then
             # Get partition size in bytes
-            size=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
+            size=$(blockdev --getsize64 "$part" 2>/dev/null || echo "0")
             
             if [ "$size" -gt "$largest_size" ]; then
                 largest_partition="$part"
@@ -260,11 +274,11 @@ select_target_partition() {
                 if [ -e "$part" ]; then
                     # Get filesystem type
                     local FS_TYPE
-                    FS_TYPE=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "unknown")
+                    FS_TYPE=$(blkid -o value -s TYPE "$part" 2>/dev/null || echo "unknown")
                     
                     # Get partition size
                     local SIZE
-                    SIZE=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
+                    SIZE=$(blockdev --getsize64 "$part" 2>/dev/null || echo "0")
                     
                     # Look for ext4 filesystem (common for root partition)
                     if [ "$FS_TYPE" = "ext4" ] && [ "$SIZE" -gt "$LARGEST_SIZE" ]; then
@@ -376,7 +390,7 @@ delete_files_from_partition() {
                     relative_file=${found_file#"$mount_dir"}
                     
                     if [ "$FORCE_OVERWRITE" = true ] || ask_confirmation "Delete file: $relative_file?" "n"; then
-                        sudo rm -f "$found_file"
+                        rm -f "$found_file"
                         echo "    Deleted: $relative_file"
                         # Update count in temp file
                         local current_count
@@ -400,7 +414,7 @@ delete_files_from_partition() {
             # Handle exact file/directory paths
             if [ -f "$full_path" ]; then
                 if [ "$FORCE_OVERWRITE" = true ] || ask_confirmation "Delete file: $file_pattern?" "n"; then
-                    sudo rm -f "$full_path"
+                    rm -f "$full_path"
                     echo "    Deleted: $file_pattern"
                     ((files_deleted++))
                 else
@@ -408,7 +422,7 @@ delete_files_from_partition() {
                 fi
             elif [ -d "$full_path" ]; then
                 if [ "$FORCE_OVERWRITE" = true ] || ask_confirmation "Delete directory: $file_pattern?" "n"; then
-                    sudo rm -rf "$full_path"
+                    rm -rf "$full_path"
                     echo "    Deleted: $file_pattern (directory)"
                     ((files_deleted++))
                 else
@@ -481,7 +495,7 @@ handle_file_conflict() {
                 ;;
             4)
                 echo "  Aborting operation"
-                exit 1
+                return 1  # Return instead of exit to allow cleanup
                 ;;
             *)
                 echo "  Invalid option. Please choose 1-4."
@@ -512,7 +526,7 @@ copy_files_with_conflict_handling() {
             if handle_file_conflict "$src_file" "$dst_file" "$relative_path"; then
                 # User chose to overwrite
                 echo "  Copying: $relative_path (overwrite)"
-                sudo cp -p "$src_file" "$dst_file"
+                cp -p "$src_file" "$dst_file"
                 ((files_copied++))
             else
                 # User chose to skip
@@ -523,12 +537,12 @@ copy_files_with_conflict_handling() {
             # Create directory if it doesn't exist
             dst_dir_path=$(dirname "$dst_file")
             if [ ! -d "$dst_dir_path" ]; then
-                sudo mkdir -p "$dst_dir_path"
+                mkdir -p "$dst_dir_path"
             fi
             
             # Copy new file
             echo "  Copying: $relative_path (new file)"
-            sudo cp -p "$src_file" "$dst_file"
+            cp -p "$src_file" "$dst_file"
             ((files_copied++))
         fi
     done < <(find "$src_dir" -type f -print0)
@@ -543,8 +557,8 @@ copy_files_with_conflict_handling() {
     fi
 }
 
-# Set up trap for cleanup
-trap cleanup EXIT
+# Set up trap for cleanup on exit and signals
+trap cleanup EXIT INT TERM
 
 # Parse command line arguments
 while getopts "i:o:d:p:m:r:fyh" opt; do
@@ -587,14 +601,14 @@ if [ "$TARGET_PARTITION" = "list" ]; then
     fi
     
     # Set up loop device
-    LOOP_DEVICE=$(sudo losetup -f --show working.wic)
-    sudo partprobe "$LOOP_DEVICE"
+    LOOP_DEVICE=$(losetup -f --show working.wic)
+    partprobe "$LOOP_DEVICE"
     
     # List partitions
     list_partitions "$LOOP_DEVICE"
     
     # Cleanup
-    sudo losetup -d "$LOOP_DEVICE"
+    losetup -d "$LOOP_DEVICE"
     cd ..
     rm -rf "$WORK_DIR"
     
@@ -679,12 +693,12 @@ parted -s working.wic print
 
 # Step 3: Set up loop device for the WIC image
 echo "Setting up loop device..."
-LOOP_DEVICE=$(sudo losetup -f --show working.wic)
+LOOP_DEVICE=$(losetup -f --show working.wic)
 echo "Loop device: $LOOP_DEVICE"
 
 # Step 4: Probe partitions
 echo "Probing partitions..."
-sudo partprobe "$LOOP_DEVICE"
+partprobe "$LOOP_DEVICE"
 
 # Step 5: Find and select the target partition
 echo "Selecting target partition..."
@@ -698,7 +712,7 @@ if [ "$PARTITION_SELECTION_MODE" = "manual" ] && [ -n "$TARGET_PARTITION" ] && [
     fi
     
     # Get filesystem type for confirmation
-    FS_TYPE=$(sudo blkid -o value -s TYPE "$ROOT_PARTITION" 2>/dev/null || echo "unknown")
+    FS_TYPE=$(blkid -o value -s TYPE "$ROOT_PARTITION" 2>/dev/null || echo "unknown")
     echo "Selected partition $TARGET_PARTITION ($FS_TYPE filesystem)"
     
     if [ "$FS_TYPE" != "ext4" ] && [ "$FS_TYPE" != "ext3" ] && [ "$FS_TYPE" != "ext2" ]; then
@@ -718,54 +732,146 @@ else
     fi
     
     # Get filesystem type for display
-    FS_TYPE=$(sudo blkid -o value -s TYPE "$ROOT_PARTITION" 2>/dev/null || echo "unknown")
+    FS_TYPE=$(blkid -o value -s TYPE "$ROOT_PARTITION" 2>/dev/null || echo "unknown")
     echo "Selected partition: $ROOT_PARTITION ($FS_TYPE filesystem)"
 fi
 
 # Step 6: Create mount point and mount the target partition
 echo "Creating mount point and mounting target partition..."
-mkdir -p "$MOUNT_DIR"
-sudo mount "$ROOT_PARTITION" "$MOUNT_DIR"
+mkdir -p "$WORK_DIR/$MOUNT_DIR"
+mount "$ROOT_PARTITION" "$WORK_DIR/$MOUNT_DIR"
+echo "Mounted $ROOT_PARTITION at $WORK_DIR/$MOUNT_DIR"
 
 # Step 7: Delete specified files if requested
 if [ -n "$DELETE_FILES" ]; then
-    delete_files_from_partition "$MOUNT_DIR" "$DELETE_FILES"
+    delete_files_from_partition "$WORK_DIR/$MOUNT_DIR" "$DELETE_FILES"
 fi
 
 # Step 8: Add custom files to the target partition
 echo "Adding custom files to target partition..."
 if [ -d "../$CUSTOM_FILES_DIR" ]; then
-    # Use the conflict handling function
-    copy_files_with_conflict_handling "../$CUSTOM_FILES_DIR" "$MOUNT_DIR"
+    echo "Custom files directory found: ../$CUSTOM_FILES_DIR"
+    # Use the conflict handling function with full path
+    if copy_files_with_conflict_handling "../$CUSTOM_FILES_DIR" "$WORK_DIR/$MOUNT_DIR"; then
+        echo "File copying function returned successfully"
+    else
+        echo "File copying function failed"
+    fi
 else
     echo "Warning: Custom files directory '../$CUSTOM_FILES_DIR' is empty or doesn't exist"
 fi
 
+echo "File copying completed successfully - continuing to next step"
+
 # Step 9: Sync and unmount
-echo "Syncing filesystem..."
-sudo sync
+echo "Starting filesystem sync and unmount..."
+sync
 
 echo "Unmounting filesystem..."
-sudo umount "$MOUNT_DIR"
-
-# Step 10: Detach loop device
-echo "Detaching loop device..."
-sudo losetup -d "$LOOP_DEVICE"
-LOOP_DEVICE=""  # Clear variable to prevent cleanup from trying again
-
-# Step 11: Create the final output image
-echo "Creating final output image..."
-if [ "$OUTPUT_COMPRESSED" = true ]; then
-    echo "Compressing modified WIC image..."
-    gzip -c working.wic > "../$OUTPUT_WIC"
-else
-    echo "Copying uncompressed WIC image..."
-    cp working.wic "../$OUTPUT_WIC"
+echo "Unmounting: $WORK_DIR/$MOUNT_DIR"
+if ! umount "$WORK_DIR/$MOUNT_DIR"; then
+    echo "Warning: Failed to unmount cleanly, forcing unmount..."
+    umount -f "$WORK_DIR/$MOUNT_DIR" || umount -l "$WORK_DIR/$MOUNT_DIR" || true
 fi
 
-# Step 12: Cleanup
+# Verify unmount
+if mountpoint -q "$WORK_DIR/$MOUNT_DIR" 2>/dev/null; then
+    echo "Warning: Mount point still active after unmount attempt"
+else
+    echo "Filesystem unmounted successfully"
+fi
+
+echo "Unmount phase completed"
+
+# Step 10: Create the output file BEFORE detaching loop device
+echo "Creating final output image..."
+
+# Change back to original directory before creating output
 cd ..
-rm -rf "$WORK_DIR"
+
+# Store the full path to the output file
+OUTPUT_FULL_PATH="$(pwd)/$OUTPUT_WIC"
+
+if [ "$OUTPUT_COMPRESSED" = true ]; then
+    echo "Compressing modified WIC image..."
+    echo "Output file: $OUTPUT_FULL_PATH"
+    gzip -c "$WORK_DIR/working.wic" > "$OUTPUT_WIC"
+else
+    echo "Copying uncompressed WIC image..."
+    echo "Output file: $OUTPUT_FULL_PATH"
+    cp "$WORK_DIR/working.wic" "$OUTPUT_WIC"
+fi
+
+# Verify output file was created
+if [ -f "$OUTPUT_WIC" ]; then
+    echo "Output file created successfully: $OUTPUT_WIC"
+    echo "Size: $(du -h "$OUTPUT_WIC" | cut -f1)"
+else
+    echo "Error: Output file was not created!"
+    exit 1
+fi
+
+# Step 11: Detach loop device
+echo "Detaching loop device..."
+echo "Current loop devices before detachment:"
+losetup -l | grep "$LOOP_DEVICE" || echo "Loop device not found in losetup -l"
+
+if ! losetup -d "$LOOP_DEVICE"; then
+    echo "Warning: Failed to detach loop device cleanly, continuing..."
+    echo "Loop device status after failed detachment:"
+    losetup -l | grep "$LOOP_DEVICE" || echo "Loop device not found"
+fi
+
+# Verify loop device is detached
+if losetup -l | grep -q "$LOOP_DEVICE"; then
+    echo "Warning: Loop device still active, force detaching..."
+    losetup -D || true
+fi
+
+echo "Loop device detached successfully"
+LOOP_DEVICE=""  # Clear variable to prevent cleanup from trying again
+
+# Step 12: Final cleanup
+echo "Final cleanup..."
+
+# Go back to the work directory for cleanup
+cd "$WORK_DIR"
+
+# Force cleanup any remaining loop devices pointing to our working file
+echo "Checking for remaining loop devices..."
+remaining_loops=$(losetup -l 2>/dev/null | grep "working.wic" | cut -d: -f1)
+if [ -n "$remaining_loops" ]; then
+    echo "Found remaining loop devices: $remaining_loops"
+    for loop in $remaining_loops; do
+        echo "Detaching remaining loop device: $loop"
+        losetup -d "$loop" || true
+    done
+else
+    echo "No remaining loop devices found"
+fi
+
+# Go back to original directory
+cd ..
+
+# Remove work directory
+if [ -d "$WORK_DIR" ]; then
+    echo "Removing work directory: $WORK_DIR"
+    echo "Contents before removal:"
+    ls -la "$WORK_DIR/" || true
+    rm -rf "$WORK_DIR"
+    if [ -d "$WORK_DIR" ]; then
+        echo "Warning: Work directory still exists after removal attempt"
+        echo "Attempting force removal..."
+        rm -rf "$WORK_DIR" || true
+    else
+        echo "Work directory successfully removed"
+    fi
+else
+    echo "Work directory not found (already cleaned up)"
+fi
+
+# Clear the trap to prevent double cleanup
+trap - EXIT
 
 echo "WIC Editor process complete!"
 echo "Repository: https://github.com/DynamicDevices/wic-editor"
@@ -782,3 +888,5 @@ if [ -f "$ORIGINAL_WIC" ] && [ -f "$OUTPUT_WIC" ]; then
     echo "Original: $(du -h "$ORIGINAL_WIC" | cut -f1)"
     echo "Modified: $(du -h "$OUTPUT_WIC" | cut -f1)"
 fi
+
+echo "Script completed successfully!"
