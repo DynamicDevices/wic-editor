@@ -35,9 +35,12 @@ INTERACTIVE=true
 TARGET_PARTITION=""
 PARTITION_SELECTION_MODE="auto"
 DELETE_FILES=""
+SHOW_HELP=false
+LIST_PARTITIONS_ONLY=false
 
 # Function to display usage
 usage() {
+    SHOW_HELP=true  # Set flag to prevent cleanup messages
     echo "Usage: $0 -i <input_wic[.gz]> -o <output_wic[.gz]> [-d <custom_files_dir>] [-p <partition>] [-m <mode>] [-r <files_to_delete>] [-f] [-y]"
     echo "  -i: Input WIC image file (compressed .wic.gz or uncompressed .wic)"
     echo "  -o: Output WIC image file (compressed .wic.gz or uncompressed .wic)"
@@ -68,6 +71,11 @@ usage() {
 
 # Function to cleanup on exit
 cleanup() {
+    # Don't clean up if we're just showing help or listing partitions
+    if [ "$SHOW_HELP" = true ] || [ "$LIST_PARTITIONS_ONLY" = true ]; then
+        return 0
+    fi
+    
     echo "Cleaning up..."
     
     # Unmount if mounted
@@ -87,6 +95,235 @@ cleanup() {
         echo "Removing work directory..."
         rm -rf "$WORK_DIR"
     fi
+}
+
+# Function to list all partitions with detailed information
+list_partitions() {
+    local loop_device="$1"
+    
+    echo "Available partitions in WIC image:"
+    echo "=================================="
+    
+    # Get partition information using parted
+    parted -s "$loop_device" print | grep "^ *[0-9]" | while read -r line; do
+        partition_num=$(echo "$line" | awk '{print $1}')
+        partition_device="${loop_device}p${partition_num}"
+        
+        if [ -e "$partition_device" ]; then
+            # Get partition size
+            size=$(echo "$line" | awk '{print $4}')
+            
+            # Get filesystem type
+            fs_type=$(sudo blkid -o value -s TYPE "$partition_device" 2>/dev/null || echo "unknown")
+            
+            # Get partition label
+            label=$(sudo blkid -o value -s LABEL "$partition_device" 2>/dev/null || echo "none")
+            
+            # Get UUID
+            uuid=$(sudo blkid -o value -s UUID "$partition_device" 2>/dev/null || echo "none")
+            
+            echo "Partition $partition_num:"
+            echo "  Device: $partition_device"
+            echo "  Size: $size"
+            echo "  Filesystem: $fs_type"
+            echo "  Label: $label"
+            echo "  UUID: $uuid"
+            echo ""
+        fi
+    done
+}
+
+# Function to ask user for confirmation
+ask_confirmation() {
+    local message="$1"
+    local default="$2"  # y or n
+    
+    if [ "$INTERACTIVE" = false ]; then
+        echo "$message [auto-answering: y]"
+        return 0
+    fi
+    
+    if [ "$default" = "y" ]; then
+        read -p "$message [Y/n]: " response
+        case "$response" in
+            [nN]|[nN][oO]) return 1 ;;
+            *) return 0 ;;
+        esac
+    else
+        read -p "$message [y/N]: " response
+        case "$response" in
+            [yY]|[yY][eE][sS]) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+}
+
+# Function to select partition interactively
+select_partition_interactive() {
+    local loop_device="$1"
+    
+    list_partitions "$loop_device"
+    
+    echo "Which partition would you like to modify?"
+    read -p "Enter partition number: " partition_choice
+    
+    # Validate partition choice
+    partition_device="${loop_device}p${partition_choice}"
+    if [ ! -e "$partition_device" ]; then
+        echo "Error: Partition $partition_choice does not exist"
+        return 1
+    fi
+    
+    # Get filesystem type for confirmation
+    fs_type=$(sudo blkid -o value -s TYPE "$partition_device" 2>/dev/null || echo "unknown")
+    
+    echo "Selected partition $partition_choice ($fs_type filesystem)"
+    if ! ask_confirmation "Proceed with this partition?" "y"; then
+        echo "Partition selection cancelled"
+        return 1
+    fi
+    
+    echo "$partition_device"
+}
+
+# Function to find partition by label
+find_partition_by_label() {
+    local loop_device="$1"
+    local target_label="$2"
+    
+    # Check each partition for matching label
+    for part in ${loop_device}p*; do
+        if [ -e "$part" ]; then
+            label=$(sudo blkid -o value -s LABEL "$part" 2>/dev/null || echo "")
+            if [ "$label" = "$target_label" ]; then
+                echo "$part"
+                return 0
+            fi
+        fi
+    done
+    
+    return 1
+}
+
+# Function to find partition by filesystem type
+find_partition_by_filesystem() {
+    local loop_device="$1"
+    local target_fs="$2"
+    
+    # Check each partition for matching filesystem
+    for part in ${loop_device}p*; do
+        if [ -e "$part" ]; then
+            fs_type=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "")
+            if [ "$fs_type" = "$target_fs" ]; then
+                echo "$part"
+                return 0
+            fi
+        fi
+    done
+    
+    return 1
+}
+
+# Function to find largest partition
+find_largest_partition() {
+    local loop_device="$1"
+    local largest_partition=""
+    local largest_size=0
+    
+    # Check each partition
+    for part in ${loop_device}p*; do
+        if [ -e "$part" ]; then
+            # Get partition size in bytes
+            size=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
+            
+            if [ "$size" -gt "$largest_size" ]; then
+                largest_partition="$part"
+                largest_size="$size"
+            fi
+        fi
+    done
+    
+    echo "$largest_partition"
+}
+
+# Function to select target partition based on mode
+select_target_partition() {
+    local loop_device="$1"
+    
+    case "$PARTITION_SELECTION_MODE" in
+        "auto")
+            # Find largest ext4 partition (current behavior)
+            local ROOT_PARTITION=""
+            local LARGEST_SIZE=0
+            
+            for part in ${loop_device}p*; do
+                if [ -e "$part" ]; then
+                    # Get filesystem type
+                    local FS_TYPE=$(sudo blkid -o value -s TYPE "$part" 2>/dev/null || echo "unknown")
+                    
+                    # Get partition size
+                    local SIZE=$(sudo blockdev --getsize64 "$part" 2>/dev/null || echo "0")
+                    
+                    # Look for ext4 filesystem (common for root partition)
+                    if [ "$FS_TYPE" = "ext4" ] && [ "$SIZE" -gt "$LARGEST_SIZE" ]; then
+                        ROOT_PARTITION="$part"
+                        LARGEST_SIZE="$SIZE"
+                    fi
+                fi
+            done
+            
+            if [ -z "$ROOT_PARTITION" ]; then
+                echo "Error: Could not find ext4 partition automatically"
+                echo "Use -m manual to select partition interactively"
+                return 1
+            fi
+            
+            echo "$ROOT_PARTITION"
+            ;;
+            
+        "manual")
+            select_partition_interactive "$loop_device"
+            ;;
+            
+        "largest")
+            find_largest_partition "$loop_device"
+            ;;
+            
+        "label")
+            if [ -z "$TARGET_PARTITION" ]; then
+                echo "Error: Partition label required with -p option"
+                return 1
+            fi
+            
+            local partition=$(find_partition_by_label "$loop_device" "$TARGET_PARTITION")
+            if [ -z "$partition" ]; then
+                echo "Error: Partition with label '$TARGET_PARTITION' not found"
+                return 1
+            fi
+            
+            echo "$partition"
+            ;;
+            
+        "filesystem")
+            if [ -z "$TARGET_PARTITION" ]; then
+                echo "Error: Filesystem type required with -p option"
+                return 1
+            fi
+            
+            local partition=$(find_partition_by_filesystem "$loop_device" "$TARGET_PARTITION")
+            if [ -z "$partition" ]; then
+                echo "Error: Partition with filesystem '$TARGET_PARTITION' not found"
+                return 1
+            fi
+            
+            echo "$partition"
+            ;;
+            
+        *)
+            echo "Error: Invalid partition selection mode: $PARTITION_SELECTION_MODE"
+            return 1
+            ;;
+    esac
 }
 
 # Function to delete files from target partition
@@ -171,28 +408,6 @@ delete_files_from_partition() {
     echo "File deletion summary:"
     echo "  Files deleted: $files_deleted"
     echo "  Files not found: $files_not_found"
-}
-    local message="$1"
-    local default="$2"  # y or n
-    
-    if [ "$INTERACTIVE" = false ]; then
-        echo "$message [auto-answering: y]"
-        return 0
-    fi
-    
-    if [ "$default" = "y" ]; then
-        read -p "$message [Y/n]: " response
-        case "$response" in
-            [nN]|[nN][oO]) return 1 ;;
-            *) return 0 ;;
-        esac
-    else
-        read -p "$message [y/N]: " response
-        case "$response" in
-            [yY]|[yY][eE][sS]) return 0 ;;
-            *) return 1 ;;
-        esac
-    fi
 }
 
 # Function to handle file conflicts
@@ -311,20 +526,79 @@ copy_files_with_conflict_handling() {
     fi
 }
 
+# Set up trap for cleanup
+trap cleanup EXIT
+
 # Parse command line arguments
-while getopts "i:o:d:h" opt; do
+while getopts "i:o:d:p:m:r:fyh" opt; do
     case $opt in
         i) ORIGINAL_WIC="$OPTARG" ;;
         o) OUTPUT_WIC="$OPTARG" ;;
         d) CUSTOM_FILES_DIR="$OPTARG" ;;
-        h) usage ;;
+        p) TARGET_PARTITION="$OPTARG" ;;
+        m) PARTITION_SELECTION_MODE="$OPTARG" ;;
+        r) DELETE_FILES="$OPTARG" ;;
+        f) FORCE_OVERWRITE=true ;;
+        y) INTERACTIVE=false ;;
+        h) SHOW_HELP=true; usage ;;
         *) usage ;;
     esac
 done
 
+# Special handling for partition listing
+if [ "$TARGET_PARTITION" = "list" ]; then
+    LIST_PARTITIONS_ONLY=true
+    
+    if [ -z "$ORIGINAL_WIC" ]; then
+        echo "Error: Input WIC file required to list partitions"
+        SHOW_HELP=true  # Set flag to prevent cleanup messages
+        usage
+    fi
+    
+    # Just list partitions and exit
+    echo "Listing partitions in $ORIGINAL_WIC..."
+    
+    # Create temporary work directory
+    mkdir -p "$WORK_DIR"
+    cd "$WORK_DIR"
+    
+    # Prepare WIC image
+    if [[ "$ORIGINAL_WIC" == *.gz ]]; then
+        gunzip -c "../$ORIGINAL_WIC" > working.wic
+    else
+        cp "../$ORIGINAL_WIC" working.wic
+    fi
+    
+    # Set up loop device
+    LOOP_DEVICE=$(sudo losetup -f --show working.wic)
+    sudo partprobe "$LOOP_DEVICE"
+    
+    # List partitions
+    list_partitions "$LOOP_DEVICE"
+    
+    # Cleanup
+    sudo losetup -d "$LOOP_DEVICE"
+    cd ..
+    rm -rf "$WORK_DIR"
+    
+    exit 0
+fi
+
+# Handle partition number specification
+if [ -n "$TARGET_PARTITION" ] && [ "$PARTITION_SELECTION_MODE" = "auto" ]; then
+    # If user specified a partition number, switch to that mode
+    if [[ "$TARGET_PARTITION" =~ ^[0-9]+$ ]]; then
+        PARTITION_SELECTION_MODE="manual"
+    else
+        # Assume it's a label or filesystem type
+        PARTITION_SELECTION_MODE="label"
+    fi
+fi
+
 # Validate required arguments
 if [ -z "$ORIGINAL_WIC" ] || [ -z "$OUTPUT_WIC" ]; then
     echo "Error: Input and output files are required"
+    SHOW_HELP=true  # Set flag to prevent cleanup messages
     usage
 fi
 
@@ -350,7 +624,7 @@ if [[ "$OUTPUT_WIC" == *.gz ]]; then
 fi
 
 # Check if custom files directory exists
-if [ ! -d "$CUSTOM_FILES_DIR" ]; then
+if [ -n "$CUSTOM_FILES_DIR" ] && [ ! -d "$CUSTOM_FILES_DIR" ]; then
     echo "Error: Custom files directory '$CUSTOM_FILES_DIR' not found"
     exit 1
 fi
@@ -431,28 +705,33 @@ else
     echo "Selected partition: $ROOT_PARTITION ($FS_TYPE filesystem)"
 fi
 
-# Step 6: Create mount point and mount the root partition
-echo "Creating mount point and mounting root partition..."
+# Step 6: Create mount point and mount the target partition
+echo "Creating mount point and mounting target partition..."
 mkdir -p "$MOUNT_DIR"
 sudo mount "$ROOT_PARTITION" "$MOUNT_DIR"
 
-# Step 7: Add custom files to the root filesystem
-echo "Adding custom files to root filesystem..."
+# Step 7: Delete specified files if requested
+if [ -n "$DELETE_FILES" ]; then
+    delete_files_from_partition "$MOUNT_DIR" "$DELETE_FILES"
+fi
+
+# Step 8: Add custom files to the target partition
+echo "Adding custom files to target partition..."
 if [ -d "../$CUSTOM_FILES_DIR" ]; then
-    # Use the new conflict handling function
+    # Use the conflict handling function
     copy_files_with_conflict_handling "../$CUSTOM_FILES_DIR" "$MOUNT_DIR"
 else
     echo "Warning: Custom files directory '../$CUSTOM_FILES_DIR' is empty or doesn't exist"
 fi
 
-# Step 8: Sync and unmount
+# Step 9: Sync and unmount
 echo "Syncing filesystem..."
 sudo sync
 
 echo "Unmounting filesystem..."
 sudo umount "$MOUNT_DIR"
 
-# Step 9: Detach loop device
+# Step 10: Detach loop device
 echo "Detaching loop device..."
 sudo losetup -d "$LOOP_DEVICE"
 LOOP_DEVICE=""  # Clear variable to prevent cleanup from trying again
