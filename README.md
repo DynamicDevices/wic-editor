@@ -8,7 +8,9 @@
 
 **Repository**: https://github.com/DynamicDevices/wic-editor
 
-A powerful tool for modifying WIC (Windows Imaging Component) images used in embedded Linux development. Originally designed for NXP i.MX8MM EVK boards using Yocto Project builds, but compatible with any WIC-based embedded Linux system.
+A powerful tool for modifying WIC (OpenEmbedded Image Creator) images used in embedded Linux development. Originally designed for NXP i.MX8MM EVK boards using Yocto Project builds, but compatible with any WIC-based embedded Linux system.
+
+**About WIC Images**: The name "WIC" is derived from OpenEmbedded Image Creator (oeic). WIC is a standalone utility that provides flexible partitioning functionality for OpenEmbedded build artifacts, based on Redhat kickstart syntax.
 
 ## Table of Contents
 
