@@ -104,7 +104,7 @@ sudo dnf install gzip util-linux parted
 #### Getting Started with Unknown WIC Images
 ```bash
 # First, list all partitions to understand the structure
-./wic-editor.sh -i unknown-image.wic -p list
+sudo ./wic-editor.sh -i unknown-image.wic -p list
 
 # Sample output shows:
 # Partition 1: boot (FAT32, 100MB)
@@ -115,86 +115,86 @@ sudo dnf install gzip util-linux parted
 #### Basic Usage
 ```bash
 # Auto-detect target partition (works for most images)
-./wic-editor.sh -i input.wic -o output.wic
+sudo ./wic-editor.sh -i input.wic -o output.wic
 
 # With custom files directory
-./wic-editor.sh -i input.wic -o output.wic -d my_custom_files
+sudo ./wic-editor.sh -i input.wic -o output.wic -d my_custom_files
 ```
 
 #### Partition Selection
 ```bash
 # Select specific partition by number
-./wic-editor.sh -i input.wic -o output.wic -p 2
+sudo ./wic-editor.sh -i input.wic -o output.wic -p 2
 
 # Interactive partition selection
-./wic-editor.sh -i input.wic -o output.wic -m manual
+sudo ./wic-editor.sh -i input.wic -o output.wic -m manual
 
 # Select by partition label
-./wic-editor.sh -i input.wic -o output.wic -m label -p rootfs
+sudo ./wic-editor.sh -i input.wic -o output.wic -m label -p rootfs
 
 # Select by filesystem type
-./wic-editor.sh -i input.wic -o output.wic -m filesystem -p ext4
+sudo ./wic-editor.sh -i input.wic -o output.wic -m filesystem -p ext4
 
 # Select largest partition (any filesystem)
-./wic-editor.sh -i input.wic -o output.wic -m largest
+sudo ./wic-editor.sh -i input.wic -o output.wic -m largest
 ```
 
 #### File Deletion
 ```bash
 # Delete specific files before adding new ones
-./wic-editor.sh -i input.wic -o output.wic -r "/etc/old_config.conf,/var/log/debug.log"
+sudo ./wic-editor.sh -i input.wic -o output.wic -r "/etc/old_config.conf,/var/log/debug.log"
 
 # Delete with wildcards
-./wic-editor.sh -i input.wic -o output.wic -r "/tmp/*,/var/cache/*"
+sudo ./wic-editor.sh -i input.wic -o output.wic -r "/tmp/*,/var/cache/*"
 
 # Delete directories
-./wic-editor.sh -i input.wic -o output.wic -r "/opt/old_app"
+sudo ./wic-editor.sh -i input.wic -o output.wic -r "/opt/old_app"
 
 # Combined deletion and addition
-./wic-editor.sh -i input.wic -o output.wic -r "/etc/hostname,/var/log/*" -d new_files
+sudo ./wic-editor.sh -i input.wic -o output.wic -r "/etc/hostname,/var/log/*" -d new_files
 ```
 
 #### For NXP i.MX8MM EVK (UUU workflow)
 ```bash
 # Auto-detect (typical usage)
-./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic
+sudo ./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic
 
 # List partitions first to understand structure
-./wic-editor.sh -i imx-image-full-imx8mmevk.wic -p list
+sudo ./wic-editor.sh -i imx-image-full-imx8mmevk.wic -p list
 
 # Select specific partition
-./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic -p 2
+sudo ./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic -p 2
 
 # Clean up old files and add new ones
-./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic \
+sudo ./wic-editor.sh -i imx-image-full-imx8mmevk.wic -o imx-image-full-imx8mmevk-modified.wic \
   -r "/etc/hostname,/var/log/*" -d my_custom_files -f
 ```
 
 #### With compressed images
 ```bash
 # Compressed to compressed
-./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic.gz -p 2
+sudo ./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic.gz -p 2
 
 # Compressed to uncompressed with partition selection
-./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic -m manual
+sudo ./wic-editor.sh -i rootfs.wic.gz -o rootfs_modified.wic -m manual
 
 # Uncompressed to compressed with file deletion
-./wic-editor.sh -i rootfs.wic -o rootfs_modified.wic.gz -r "/tmp/*"
+sudo ./wic-editor.sh -i rootfs.wic -o rootfs_modified.wic.gz -r "/tmp/*"
 ```
 
 #### File Conflict and Automation
 ```bash
 # Interactive mode (default) - prompts for each file conflict
-./wic-editor.sh -i input.wic -o output.wic -p 2
+sudo ./wic-editor.sh -i input.wic -o output.wic -p 2
 
 # Force overwrite all conflicting files
-./wic-editor.sh -i input.wic -o output.wic -p 2 -f
+sudo ./wic-editor.sh -i input.wic -o output.wic -p 2 -f
 
 # Non-interactive mode - automatically overwrites conflicting files
-./wic-editor.sh -i input.wic -o output.wic -p 2 -y
+sudo ./wic-editor.sh -i input.wic -o output.wic -p 2 -y
 
 # Fully automated operation
-./wic-editor.sh -i input.wic -o output.wic -p 2 -f -y
+sudo ./wic-editor.sh -i input.wic -o output.wic -p 2 -f -y
 ```
 
 ## Setup Instructions
@@ -237,14 +237,16 @@ custom_files/
 ### 3. Run WIC Editor
 ```bash
 # Interactive mode (default) - prompts for file conflicts
-./wic-editor.sh -i your_image.wic -o your_image_modified.wic -d custom_files
+sudo ./wic-editor.sh -i your_image.wic -o your_image_modified.wic -d custom_files
 
 # Automated mode - overwrites all conflicts
-./wic-editor.sh -i your_image.wic -o your_image_modified.wic -d custom_files -f -y
+sudo ./wic-editor.sh -i your_image.wic -o your_image_modified.wic -d custom_files -f -y
 
 # Force overwrite mode - overwrites conflicts but still shows progress
-./wic-editor.sh -i your_image.wic -o your_image_modified.wic -d custom_files -f
+sudo ./wic-editor.sh -i your_image.wic -o your_image_modified.wic -d custom_files -f
 ```
+
+**Note:** WIC Editor requires root privileges to mount filesystems and manage loop devices. Always run with `sudo`.
 
 ### 4. Update UUU Script
 If using with NXP UUU tool, update your UUU script file (e.g., `uuu.auto-imx8mmevk`):
@@ -369,16 +371,16 @@ File operation summary:
 ### Exploring Unknown WIC Images
 ```bash
 # First step: understand the partition structure
-./wic-editor.sh -i unknown-image.wic -p list
+sudo ./wic-editor.sh -i unknown-image.wic -p list
 
 # Once you know the layout, select appropriate partition
-./wic-editor.sh -i unknown-image.wic -o modified.wic -p 2
+sudo ./wic-editor.sh -i unknown-image.wic -o modified.wic -p 2
 ```
 
 ### System Configuration with Cleanup
 ```bash
 # Remove old configs and add new ones
-./wic-editor.sh -i system.wic -o updated.wic \
+sudo ./wic-editor.sh -i system.wic -o updated.wic \
   -r "/etc/old_config.conf,/etc/deprecated/*" \
   -d new_system_configs
 ```
@@ -386,7 +388,7 @@ File operation summary:
 ### Application Deployment
 ```bash
 # Clean deployment: remove old app and install new version
-./wic-editor.sh -i base.wic -o deployed.wic \
+sudo ./wic-editor.sh -i base.wic -o deployed.wic \
   -r "/opt/old_app" \
   -d new_app_files \
   -m label -p rootfs
@@ -395,10 +397,10 @@ File operation summary:
 ### Development Workflow
 ```bash
 # Interactive mode for careful development
-./wic-editor.sh -i dev-image.wic -o test-image.wic -m manual
+sudo ./wic-editor.sh -i dev-image.wic -o test-image.wic -m manual
 
 # Production deployment with automation
-./wic-editor.sh -i prod-image.wic -o deployed.wic -p 2 -f -y
+sudo ./wic-editor.sh -i prod-image.wic -o deployed.wic -p 2 -f -y
 ```
 
 ### Adding Startup Scripts
@@ -482,10 +484,10 @@ For automated builds where you want to overwrite system files:
 bitbake my-image
 
 # Modify the resulting WIC image with force overwrite
-./wic-editor.sh -i deploy/images/imx8mmevk/my-image.wic \
-                -o deploy/images/imx8mmevk/my-image-custom.wic \
-                -d custom_overlay \
-                -f -y
+sudo ./wic-editor.sh -i deploy/images/imx8mmevk/my-image.wic \
+                     -o deploy/images/imx8mmevk/my-image-custom.wic \
+                     -d custom_overlay \
+                     -f -y
 
 # Flash with UUU
 uuu uuu.auto-imx8mmevk-custom
@@ -496,13 +498,13 @@ For complex deployments with multiple file sources:
 
 ```bash
 # Stage 1: Base system modifications (force overwrite)
-./wic-editor.sh -i original.wic -o stage1.wic -d base_system_changes -f
+sudo ./wic-editor.sh -i original.wic -o stage1.wic -d base_system_changes -f
 
 # Stage 2: Application files (interactive to review conflicts)
-./wic-editor.sh -i stage1.wic -o stage2.wic -d application_files
+sudo ./wic-editor.sh -i stage1.wic -o stage2.wic -d application_files
 
 # Stage 3: Final configuration (non-interactive)
-./wic-editor.sh -i stage2.wic -o final.wic -d final_config -y
+sudo ./wic-editor.sh -i stage2.wic -o final.wic -d final_config -y
 ```
 
 ### Best Practices for File Conflicts
@@ -511,7 +513,7 @@ For complex deployments with multiple file sources:
 When modifying system files like `/etc/hostname`, `/etc/hosts`, `/etc/fstab`:
 ```bash
 # Use interactive mode to review changes
-./wic-editor.sh -i input.wic -o output.wic
+sudo ./wic-editor.sh -i input.wic -o output.wic
 
 # When prompted, choose option 3 to see differences
 # This helps you understand what you're changing
@@ -525,16 +527,16 @@ mkdir -p custom_files/etc/systemd/system
 cp my_custom.service custom_files/etc/systemd/system/
 
 # Use interactive mode to review any existing service modifications
-./wic-editor.sh -i input.wic -o output.wic
+sudo ./wic-editor.sh -i input.wic -o output.wic
 ```
 
 #### 3. **Development vs Production**
 ```bash
 # Development: Interactive mode for careful review
-./wic-editor.sh -i dev_image.wic -o dev_image_modified.wic
+sudo ./wic-editor.sh -i dev_image.wic -o dev_image_modified.wic
 
 # Production: Automated mode for consistent deployment
-./wic-editor.sh -i prod_image.wic -o prod_image_modified.wic -f -y
+sudo ./wic-editor.sh -i prod_image.wic -o prod_image_modified.wic -f -y
 ```
 
 #### 4. **Backup Strategy**
@@ -544,7 +546,7 @@ mkdir -p backups/$(date +%Y%m%d)
 cp important_configs/* backups/$(date +%Y%m%d)/
 
 # Then proceed with modifications
-./wic-editor.sh -i input.wic -o output.wic
+sudo ./wic-editor.sh -i input.wic -o output.wic
 ```
 
 ## File Size Considerations
